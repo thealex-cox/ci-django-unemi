@@ -1,14 +1,17 @@
-name: CI - Django
+name: CI/CD - Django
 
-# El pipeline se dispara con cada push a main o ci-setup,
+# El pipeline se dispara con cada push a main, ci-setup, docker-setup o cd-setup,
 # y tambien en cada Pull Request dirigido a main.
 on:
   push:
-    branches: [main, ci-setup]
+    branches: [main, ci-setup, docker-setup, cd-setup]
   pull_request:
     branches: [main]
 
 jobs:
+  # ---------------------------------------------------------------
+  # JOB 1 (Sesion 1): Integracion Continua - pruebas con PostgreSQL
+  # ---------------------------------------------------------------
   test:
     name: Instalar dependencias y ejecutar pruebas
     runs-on: ubuntu-latest
@@ -62,3 +65,67 @@ jobs:
           POSTGRES_USER: ci_user
           POSTGRES_PASSWORD: ci_pass
         run: python manage.py test --verbosity=2
+
+  # ---------------------------------------------------------------
+  # JOB 2 (Sesion 3): Build de la imagen Docker + despliegue simulado
+  # Solo se ejecuta si las pruebas del JOB 1 pasaron (needs: test)
+  # ---------------------------------------------------------------
+  build-deploy:
+    name: Construir imagen Docker y simular despliegue
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: 1. Descargar el codigo del repositorio
+        uses: actions/checkout@v4
+
+      - name: 2. Construir la imagen Docker
+        run: |
+          docker build -t ci-django-unemi:latest -t ci-django-unemi:${{ github.sha }} .
+          docker images ci-django-unemi
+
+      - name: 3. Preparar la imagen para DockerHub (simulado)
+        run: |
+          docker tag ci-django-unemi:latest unemi-grupo/ci-django-unemi:${{ github.sha }}
+          echo "Imagen etiquetada para DockerHub: unemi-grupo/ci-django-unemi:${{ github.sha }}"
+          echo "SIMULADO - en un entorno real se ejecutaria:"
+          echo "  docker login -u USUARIO"
+          echo "  docker push unemi-grupo/ci-django-unemi:${{ github.sha }}"
+
+      - name: 4. Exportar la imagen como artefacto
+        run: docker save ci-django-unemi:latest | gzip > ci-django-unemi-image.tar.gz
+
+      - name: 5. Guardar el artefacto en GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-django-unemi-image
+          path: ci-django-unemi-image.tar.gz
+          retention-days: 7
+
+      - name: 6. Levantar el sistema con Docker Compose
+        run: |
+          docker compose up -d --no-build
+          docker compose ps
+
+      - name: 7. Validar que la aplicacion responde
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fs http://localhost:8000/tareas/; then
+              echo ""
+              echo "La aplicacion respondio correctamente desde el contenedor"
+              exit 0
+            fi
+            echo "Esperando a que Django inicie... intento $i"
+            sleep 2
+          done
+          echo "La aplicacion no respondio a tiempo"
+          docker compose logs
+          exit 1
+
+      - name: 8. Mostrar registros de los contenedores
+        if: always()
+        run: docker compose logs
+
+      - name: 9. Detener y limpiar contenedores
+        if: always()
+        run: docker compose down -v
