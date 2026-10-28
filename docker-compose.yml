@@ -1,0 +1,35 @@
+services:
+  # Contenedor de base de datos PostgreSQL
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: django_db
+      POSTGRES_USER: django_user
+      POSTGRES_PASSWORD: django_pass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U django_user -d django_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Contenedor de la aplicación Django
+  web:
+    build: .
+    image: ci-django-unemi
+    ports:
+      - "8000:8000"
+    environment:
+      USE_POSTGRES: "1"
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: django_db
+      POSTGRES_USER: django_user
+      POSTGRES_PASSWORD: django_pass
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
